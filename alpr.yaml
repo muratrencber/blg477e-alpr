@@ -1,0 +1,6 @@
+train: ../blg477e-alpr/datasets/roboflow-v4/train/images
+val: ../blg477e-alpr/datasets/roboflow-v4/valid/images
+test: ../blg477e-alpr/datasets/roboflow-v4/test/images
+
+nc: 1
+names: ['License_Plate']
