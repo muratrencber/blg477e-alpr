@@ -1,0 +1,6 @@
+train: /content/datasets/roboflow-v4/train/images
+val: /content/datasets/roboflow-v4/valid/images
+test: /content/datasets/roboflow-v4/test/images
+
+nc: 1
+names: ['License_Plate']
