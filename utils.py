@@ -41,7 +41,7 @@ def read_csv_lpdata(row) -> LPRecognizerLPData:
         data.plate_confidence = float(row["lp_plate_confidence"])
     return data
 
-def read_csv_framedata_list(path: str) -> list[LPRecognizerFrameData]:
+def read_csv_framedata_list(path: str) -> dict[str, LPRecognizerFrameData]:
     with open(path, newline="") as csvfile:
         csv_reader = csv.DictReader(csvfile)
         frames = {}
@@ -53,4 +53,4 @@ def read_csv_framedata_list(path: str) -> list[LPRecognizerFrameData]:
             id = row["lp_id"]
             lpdata = read_csv_lpdata(row)
             framedata.lps[id] = lpdata
-        return sorted(frames.items())
+        return dict(sorted(frames.items()))

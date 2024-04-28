@@ -70,8 +70,10 @@ class LPRecognizer:
         for t in tracks:
             bbox = self.process_car_box(frame, t)
             lpdata = LPRecognizerLPData()
-            if last_results is not None and last_results.lps.get(f"{t.id}") is not None:
-                lpdata = last_results.lps[f"{t.id}"].clone()
+            if last_results is not None and f"{t.id}" in last_results.lps:
+                last_lpd = last_results.lps[f"{t.id}"]
+                lpdata.plate = last_lpd.plate
+                lpdata.plate_confidence = last_lpd.plate_confidence
             lpdata.car_box = bbox
             new_results.lps[f"{t.id}"] = lpdata
         id_count = 0
@@ -92,7 +94,7 @@ class LPRecognizer:
     def find_car_of_lp(self, lp_box: LPBoundingBox, frame_data: LPRecognizerFrameData) -> LPRecognizerLPData | None:
         selected, selected_threshold = None, 0
         for lpdata in frame_data.lps.values():
-            if lpdata.car_box is None:
+            if lpdata.car_box is None or lpdata.box is not None:
                 continue
             overlap = lpdata.car_box.overlap_amount(lp_box)
             if overlap > selected_threshold and overlap > OVERLAP_THRESHOLD:
