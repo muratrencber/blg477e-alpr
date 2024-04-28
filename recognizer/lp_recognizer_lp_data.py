@@ -7,7 +7,6 @@ class LPRecognizerLPData:
         self.confidence: float = None
         self.plate: str = None
         self.plate_confidence: float = None
-        self.croppedim = None
 
     def clone(self):
         clone = LPRecognizerLPData()
