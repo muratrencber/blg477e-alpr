@@ -10,10 +10,14 @@ from recognizer.lp_recognizer import LPRecognizer
 from ultralytics import YOLO
 import easyocr
 import json
+import os
+
+lpr_model_filename = "alpr_v8n_100ep.pt"
+vehicle_detection_model_filename = "yolov8n.pt"
 
 ocr = easyocr.Reader(['en'], gpu=True)
-lpr_model = YOLO("alpr_v8n_100ep.pt", verbose=False)
-vehicle_detection_model = YOLO("yolov8n.pt", verbose=False)
+lpr_model = YOLO(lpr_model_filename, verbose=False)
+vehicle_detection_model = YOLO(vehicle_detection_model_filename, verbose=False)
 lp_recognizer = LPRecognizer(lpr_model, vehicle_detection_model, ocr)
 
 current_video_path = None
@@ -25,8 +29,63 @@ def browse_video():
     filename = filedialog.askopenfilename(filetypes=[("MP4 files", "*.mp4"), ("All Files", "*.*")])
     if filename:
         current_video_path = filename
-        video_label.config(text="Selected Video: " + filename)
+        update_file_info(filename)
         update_ui_state('video_selected')
+
+def browse_lpr_model():
+    global lpr_model_filename
+    filename = filedialog.askopenfilename(filetypes=[("PyTorch model files", "*.pt"), ("All Files", "*.*")])
+    if filename:
+        lpr_model_filename = filename
+        update_model_info()
+
+def browse_vehicle_model():
+    global vehicle_detection_model_filename
+    filename = filedialog.askopenfilename(filetypes=[("PyTorch model files", "*.pt"), ("All Files", "*.*")])
+    if filename:
+        vehicle_detection_model_filename = filename
+        update_model_info()
+
+def extract_thumbnail(video_path):
+    cap = cv.VideoCapture(video_path)
+    success, image = cap.read()
+    if success:
+        height, width, _ = image.shape
+        max_size = 100
+        if height > width:
+            new_height = max_size
+            new_width = int(max_size * (width / height))
+        else:
+            new_width = max_size
+            new_height = int(max_size * (height / width))
+        resized_image = cv.resize(image, (new_width, new_height))
+        image = Image.fromarray(cv.cvtColor(resized_image, cv.COLOR_BGR2RGB))
+        cap.release()
+        return image
+    cap.release()
+    return None
+
+def update_file_info(filename):
+    video_filename_box.config(state='enabled')
+    video_filename_box.delete(0, tk.END)
+    video_filename_box.insert(0, os.path.basename(filename))
+    video_filename_box.config(state='disabled')
+    img = extract_thumbnail(filename)
+    if img:
+        img = ImageTk.PhotoImage(img)
+        thumbnail_label.config(image=img)
+        thumbnail_label.image = img
+
+def update_model_info():
+    global lpr_model, vehicle_detection_model, lpr_model_filename, vehicle_detection_model_filename, lp_recognizer
+
+    lpr_model = YOLO(lpr_model_filename, verbose=False)
+    vehicle_detection_model = YOLO(vehicle_detection_model_filename, verbose=False)
+    lp_recognizer = LPRecognizer(lpr_model, vehicle_detection_model, ocr)
+
+    lpr_browse_button.config(text=os.path.basename(lpr_model_filename))
+    vehicle_browse_button.config(text=os.path.basename(vehicle_detection_model_filename))
+
 
 def start_prediction():
     predict_button.config(state='disabled', text="Predicting...")
@@ -39,6 +98,7 @@ def stop_prediction():
 
 def process_video(video_path):
     vid = cv.VideoCapture(video_path)
+    total_frames = int(vid.get(cv.CAP_PROP_FRAME_COUNT))
     fps = vid.get(cv.CAP_PROP_FPS)
     lp_recognizer.setup_tracking(fps)
 
@@ -46,10 +106,16 @@ def process_video(video_path):
     original_height = int(vid.get(cv.CAP_PROP_FRAME_HEIGHT))
     aspect_ratio = original_width / original_height
 
+    progress_bar.config(maximum=total_frames)
+    current_frame = 0
+
     while not stop_event.is_set():
         ret, original_frame = vid.read()
         if not ret:
             break
+
+        current_frame += 1
+        progress_bar.config(value=current_frame)
 
         frame_data = lp_recognizer.recognize_frame(original_frame)
 
@@ -96,20 +162,21 @@ def process_video(video_path):
 def update_ui_state(state):
     if state == 'video_selected':
         predict_button.config(state='normal', text="Predict")
+        video_canvas_placeholder.pack_forget()
+        video_canvas.pack(fill=tk.BOTH, expand=True)
+        progress_bar.pack(fill=tk.X)
         stop_button.pack_forget()
     elif state == 'predicting':
-        browse_button.pack_forget()
+        browse_button.config(state='disabled')
         stop_button.pack(side=tk.TOP, pady=(10, 0))
     elif state == 'prediction_complete':
-        predict_button.pack_forget()
         predict_button.config(state='normal', text="Predict")
-        browse_button.pack(side=tk.TOP, pady=(10, 0))
-        predict_button.pack(side=tk.TOP, pady=(10, 0))
+        browse_button.config(state='normal')
         stop_button.pack_forget()
     elif state == 'replaying':
         stop_button.pack(side=tk.TOP, pady=(10, 0))
     elif state == 'stopped':
-        browse_button.pack(side=tk.TOP, pady=(10, 0))
+        browse_button.config(state='normal')
         predict_button.pack(side=tk.TOP, pady=(10, 0))
         stop_button.pack_forget()
         predict_button.config(state='normal', text="Predict")
@@ -131,25 +198,61 @@ def draw_predictions(border_frame, frame_data, new_width, new_height, x_offset, 
 
 root = tk.Tk()
 root.title("License Plate Recognition GUI")
-root.geometry("800x600")
+root.geometry("1000x600")
+root.minsize(1000, 600)
+
+
 
 main_frame = ttk.Frame(root, padding=10)
-main_frame.pack(fill=tk.BOTH, expand=True)
+main_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+sidebar_frame = ttk.Frame(root, padding=10)
+sidebar_frame.pack(side=tk.RIGHT, fill=tk.Y)
 
 video_canvas = tk.Canvas(main_frame, width=760, height=400)
-video_canvas.pack(fill=tk.BOTH, expand=True)
+video_canvas.pack_forget()
 
-video_label = ttk.Label(main_frame, text="No video selected")
-video_label.pack()
+video_canvas_placeholder = ttk.Button(main_frame, text='Select a video to start', command=browse_video)
+video_canvas_placeholder.pack(fill=tk.BOTH, expand=True)
 
-stop_button = ttk.Button(main_frame, text="Stop", command=stop_prediction)
+progress_bar = ttk.Progressbar(main_frame, orient='horizontal', length=760, mode='determinate')
+progress_bar.pack_forget()
+
+predict_button = ttk.Button(sidebar_frame, text="Predict", command=start_prediction, state='disabled', style='Accent.TButton')
+predict_button.pack(side=tk.TOP, pady=(10, 0))
+
+file_frame = ttk.LabelFrame(sidebar_frame, text="Video File", padding=10)
+file_frame.pack(pady=(10, 0), fill=tk.X)
+
+lpr_model_select_frame = ttk.LabelFrame(sidebar_frame, text="LP Detection Model", padding=10)
+lpr_model_select_frame.pack(pady=(10, 0), fill=tk.X)
+
+vehicle_model_select_frame = ttk.LabelFrame(sidebar_frame, text="Vehicle Detection Model", padding=10)
+vehicle_model_select_frame.pack(pady=(10, 0), fill=tk.X)
+
+lpr_browse_button = ttk.Button(lpr_model_select_frame, text=lpr_model_filename, command=browse_lpr_model)
+lpr_browse_button.pack(pady=(5, 0), fill=tk.X)
+
+vehicle_browse_button = ttk.Button(vehicle_model_select_frame, text=vehicle_detection_model_filename, command=browse_vehicle_model)
+vehicle_browse_button.pack(pady=(5, 0), fill=tk.X)
+
+video_filename_box = ttk.Entry(file_frame, state='disabled', width=30)
+video_filename_box.pack(side=tk.TOP, fill=tk.X)
+
+thumbnail_label = ttk.Label(file_frame)
+thumbnail_label.pack(pady=(5, 0))
+
+browse_button = ttk.Button(file_frame, text="Browse", command=browse_video)
+browse_button.pack(pady=(5, 0))
+
+stop_button = ttk.Button(sidebar_frame, text="Stop", command=stop_prediction)
 stop_button.pack_forget()
 
-browse_button = ttk.Button(main_frame, text="Browse Video", command=browse_video)
-browse_button.pack(side=tk.TOP, pady=(10, 0))
+about_label = ttk.Label(sidebar_frame, text="Made in İTÜ with ❤")
+about_label.pack(side=tk.BOTTOM, pady=(10, 0))
 
-predict_button = ttk.Button(main_frame, text="Predict", command=start_prediction, state='disabled')
-predict_button.pack(side=tk.TOP, pady=(10, 0))
+theme_switch_button = ttk.Checkbutton(sidebar_frame, text="Switch theme", style="Switch.TCheckbutton", command=sv_ttk.toggle_theme)
+theme_switch_button.pack(side=tk.BOTTOM, pady=(5, 0))
 
 sv_ttk.set_theme("dark")
 
