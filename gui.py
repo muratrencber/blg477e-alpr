@@ -5,12 +5,11 @@ import cv2 as cv
 from PIL import Image, ImageTk
 import threading
 import numpy as np
-import csv
 from recognizer.lp_recognizer import LPRecognizer
 from ultralytics import YOLO
 import easyocr
-import json
 import os
+import torch
 
 lpr_model_filename = "alpr_v8n_100ep.pt"
 vehicle_detection_model_filename = "yolov8n.pt"
@@ -23,6 +22,14 @@ lp_recognizer = LPRecognizer(lpr_model, vehicle_detection_model, ocr)
 current_video_path = None
 csv_path = 'output.csv'
 stop_event = threading.Event()
+
+def check_cuda_status():
+    if torch.cuda.is_available():
+        cuda_status_label.config(text="CUDA ready", image=green_circle)
+        gpu_name_label.config(text=torch.cuda.get_device_name(torch.cuda.current_device()))
+    else:
+        cuda_status_label.config(text="CUDA device not found", image=red_circle)
+        gpu_name_label.config(text="")
 
 def browse_video():
     global current_video_path
@@ -88,6 +95,9 @@ def update_model_info():
 
 
 def start_prediction():
+    global current_theme
+    current_theme = sv_ttk.get_theme(root)
+
     predict_button.config(state='disabled', text="Predicting...")
     stop_event.clear()
     update_ui_state('predicting')
@@ -130,9 +140,11 @@ def process_video(video_path):
             new_width = canvas_width
             new_height = int(new_width / aspect_ratio)
 
-        # Resize the frame for display purposes and place it on a black border frame
+        # Resize the frame for display purposes and place it on a border frame
         display_frame = cv.resize(original_frame, (new_width, new_height))
         border_frame = np.zeros((canvas_height, canvas_width, 3), dtype=np.uint8)
+        
+        border_frame[:] = (28, 28, 28) if current_theme == 'dark' else (250, 250, 250)
 
         # Calculate the offset to center the image
         x_offset = (canvas_width - new_width) // 2
@@ -180,6 +192,12 @@ def update_ui_state(state):
         predict_button.pack(side=tk.TOP, pady=(10, 0))
         stop_button.pack_forget()
         predict_button.config(state='normal', text="Predict")
+
+def switch_theme():
+    global current_theme
+    sv_ttk.toggle_theme()
+    current_theme = sv_ttk.get_theme(root)
+
 
 def draw_predictions(border_frame, frame_data, new_width, new_height, x_offset, y_offset):
     for lp_id, lpdata in frame_data.lps.items():
@@ -230,6 +248,21 @@ lpr_model_select_frame.pack(pady=(10, 0), fill=tk.X)
 vehicle_model_select_frame = ttk.LabelFrame(sidebar_frame, text="Vehicle Detection Model", padding=10)
 vehicle_model_select_frame.pack(pady=(10, 0), fill=tk.X)
 
+acceleration_frame = ttk.LabelFrame(sidebar_frame, text="Acceleration", padding=10)
+acceleration_frame.pack(pady=(10, 0), fill=tk.X)
+
+green_circle = tk.PhotoImage(width=10, height=10)
+green_circle.put(("green",), to=(0, 0, 9, 9))
+
+red_circle = tk.PhotoImage(width=10, height=10)
+red_circle.put(("red",), to=(0, 0, 9, 9))
+
+cuda_status_label = ttk.Label(acceleration_frame, text="", image=None, compound="left")
+cuda_status_label.pack(side=tk.TOP, pady=(5, 0), fill=tk.X)
+
+gpu_name_label = ttk.Label(acceleration_frame, text="")
+gpu_name_label.pack(side=tk.TOP, pady=(5, 0), fill=tk.X)
+
 lpr_browse_button = ttk.Button(lpr_model_select_frame, text=lpr_model_filename, command=browse_lpr_model)
 lpr_browse_button.pack(pady=(5, 0), fill=tk.X)
 
@@ -251,9 +284,11 @@ stop_button.pack_forget()
 about_label = ttk.Label(sidebar_frame, text="Made in İTÜ with ❤")
 about_label.pack(side=tk.BOTTOM, pady=(10, 0))
 
-theme_switch_button = ttk.Checkbutton(sidebar_frame, text="Switch theme", style="Switch.TCheckbutton", command=sv_ttk.toggle_theme)
+theme_switch_button = ttk.Checkbutton(sidebar_frame, text="Switch theme", style="Switch.TCheckbutton", command=switch_theme)
 theme_switch_button.pack(side=tk.BOTTOM, pady=(5, 0))
 
 sv_ttk.set_theme("dark")
+current_theme = sv_ttk.get_theme(root)
 
+check_cuda_status()
 root.mainloop()
