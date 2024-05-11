@@ -1,4 +1,5 @@
 /venv
+/alprenv
 /datasets
 /runs
 **/__pycache__/

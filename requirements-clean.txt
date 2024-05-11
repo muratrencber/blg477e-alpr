@@ -1,0 +1,10 @@
+ultralytics
+cv2
+torch
+easyocr
+motpy
+numpy
+tkinter
+sv_ttk
+PIL
+matplotlib
