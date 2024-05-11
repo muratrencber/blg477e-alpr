@@ -19,9 +19,12 @@ lpr_model = YOLO(lpr_model_filename, verbose=False)
 vehicle_detection_model = YOLO(vehicle_detection_model_filename, verbose=False)
 lp_recognizer = LPRecognizer(lpr_model, vehicle_detection_model, ocr)
 
+vid = None
 current_video_path = None
 csv_path = 'output.csv'
 stop_event = threading.Event()
+
+current_frame_index = 0
 
 def check_cuda_status():
     if torch.cuda.is_available():
@@ -95,9 +98,10 @@ def update_model_info():
 
 
 def start_prediction():
-    global current_theme
+    global current_theme, current_frame_index
     current_theme = sv_ttk.get_theme(root)
 
+    current_frame_index = 0
     predict_button.config(state='disabled', text="Predicting...")
     stop_event.clear()
     update_ui_state('predicting')
@@ -107,6 +111,7 @@ def stop_prediction():
     stop_event.set()
 
 def process_video(video_path):
+    global vid, current_frame_index
     vid = cv.VideoCapture(video_path)
     total_frames = int(vid.get(cv.CAP_PROP_FRAME_COUNT))
     fps = vid.get(cv.CAP_PROP_FPS)
@@ -117,15 +122,14 @@ def process_video(video_path):
     aspect_ratio = original_width / original_height
 
     progress_bar.config(maximum=total_frames)
-    current_frame = 0
 
     while not stop_event.is_set():
         ret, original_frame = vid.read()
         if not ret:
             break
 
-        current_frame += 1
-        progress_bar.config(value=current_frame)
+        current_frame_index += 1
+        progress_bar.config(value=current_frame_index)
 
         frame_data = lp_recognizer.recognize_frame(original_frame)
 
@@ -214,6 +218,22 @@ def draw_predictions(border_frame, frame_data, new_width, new_height, x_offset, 
             car_bottom = (car_bottom[0] + x_offset, car_bottom[1] + y_offset)
             cv.rectangle(border_frame, car_top, car_bottom, (0, 0, 255), 3)
 
+def on_progress_click(event):
+    global vid, current_frame_index
+    width = progress_bar.winfo_width()
+    click_x = event.x 
+    progress_ratio = click_x / width
+    
+    total_frames = int(vid.get(cv.CAP_PROP_FRAME_COUNT))
+    target_frame = int(total_frames * progress_ratio)
+    
+    if vid.isOpened():
+        vid.set(cv.CAP_PROP_POS_FRAMES, target_frame)
+        progress_bar.config(value=target_frame)
+        current_frame_index = target_frame
+
+
+
 root = tk.Tk()
 root.title("License Plate Recognition GUI")
 root.geometry("1000x600")
@@ -234,6 +254,7 @@ video_canvas_placeholder = ttk.Button(main_frame, text='Select a video to start'
 video_canvas_placeholder.pack(fill=tk.BOTH, expand=True)
 
 progress_bar = ttk.Progressbar(main_frame, orient='horizontal', length=760, mode='determinate')
+progress_bar.bind('<Button-1>', on_progress_click)
 progress_bar.pack_forget()
 
 predict_button = ttk.Button(sidebar_frame, text="Predict", command=start_prediction, state='disabled', style='Accent.TButton')
