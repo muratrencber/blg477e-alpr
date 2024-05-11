@@ -8,9 +8,45 @@ from easyocr import Reader
 from motpy import Detection, MultiObjectTracker, Track
 import cv2 as cv
 import numpy as np
+import sympy
 
 RELEVANT_VEHICLE_CLASSES = [2,3,5,7] #2: car, 3: motorcycle, 5: bus, 7: truck
 OVERLAP_THRESHOLD = 0.5
+
+NUM_TO_CHAR = {
+    "1": "I",
+    "0": "O",
+    "2": "Z",
+    "3": "B",
+    "4": "A",
+    "5": "S",
+    "6": "G",
+    "7": "T",
+    "8": "B",
+    "9": "G",
+    "{": "1",
+    "}": "1",
+    "[": "1",
+    "]": "1",
+}
+
+CHAR_TO_NUM = {
+    "I": "1",
+    "O": "0",
+    "Z": "2",
+    "B": "3",
+    "A": "4",
+    "S": "5",
+    "G": "6",
+    "T": "7",
+    "B": "8",
+    "G": "9",
+    "I": "{",
+    "1": "}",
+    "1": "[",
+    "1": "]",
+
+}
 
 def crop_image(image: MatLike, box: LPBoundingBox) -> Tensor:
     xt, yt, xb, yb = box.xtop, box.ytop, box.xbottom, box.ybottom
@@ -18,10 +54,78 @@ def crop_image(image: MatLike, box: LPBoundingBox) -> Tensor:
     x1, y1, x2, y2 = int(xt * width), int(yt * height), int(xb * width), int(yb * height)
     return image[y1:y2, x1:x2]
 
+def process_plate_img(img: MatLike) -> tuple[MatLike, MatLike]:
+    gray_img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+    mask = cv.inRange(gray_img, 0, 150)
+    inv_mask = cv.bitwise_not(mask)
+    return inv_mask, gray_img
+
 def preprocess_img_for_ocr(img: MatLike) -> MatLike:
-    gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
-    _, thresh = cv.threshold(gray, 64, 255, cv.THRESH_BINARY_INV)
-    return gray
+    mask, gray_img = process_plate_img(img)
+    contours, _ = cv.findContours(mask, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+    max_area = -1
+    max_contour = np.array([])
+    mcfull = None
+    for c in contours:
+        area = cv.contourArea(c)
+        if area < 400:
+            continue
+        if area <= max_area:
+            continue
+        peri = cv.arcLength(c, True)
+        approx = cv.approxPolyDP(c, 0.06 * peri, True)
+        mcfull = c
+        if len(approx) != 4:
+            continue
+        max_area = area
+        max_contour = approx
+    if max_area == -1:
+        copmask = mask.copy()
+        rgbmask = cv.cvtColor(copmask, cv.COLOR_GRAY2BGR)
+        return (rgbmask, False)
+    s1,s2,s3 = max_contour.shape
+    points = max_contour.reshape(s1, 2)
+    coords = np.zeros((4, 2), dtype='float32')
+
+    psum = points.sum(axis=1)
+    coords[0] = points[np.argmin(psum)]
+    coords[3] = points[np.argmax(psum)]
+    pdiff = np.diff(points, axis=1)
+    coords[1] = points[np.argmin(pdiff)]
+    coords[2] = points[np.argmax(pdiff)]
+
+    tl, tr, bl, br = coords
+    bw = np.sqrt((br[0] - bl[0])**2 + (br[1] - bl[1])**2)
+    tw = np.sqrt((tr[0] - tl[0])**2 + (tr[1] - tl[1])**2)
+    rh = np.sqrt((tr[0] - br[0])**2 + (tr[1] - br[1])**2)
+    lh = np.sqrt((tl[0] - bl[0])**2 + (tl[1] - bl[1])**2)
+    max_w = max(bw, tw)
+    max_h = max(rh, lh)
+
+    plate_ar = 11/52
+    if max_h/max_w > plate_ar:
+        max_h = max_w * plate_ar
+    else:
+        max_w = max_h / plate_ar
+
+    target_points = np.float32([[0,0], [int(max_w), 0], [0, int(max_h)], [int(max_w), int(max_h)]])
+    mat = cv.getPerspectiveTransform(coords, target_points)
+    res = cv.warpPerspective(gray_img, mat, (int(max_w), int(max_h)))
+    _, thresh = cv.threshold(gray_img, 64, 255, cv.THRESH_BINARY_INV)
+    return (cv.cvtColor(res, cv.COLOR_GRAY2BGR), True)
+
+def try_convert_platenumber(plate: str) -> str | None:
+    plate = plate.replace(" ", "")
+    gibberish = "()\{\}[]<>"
+    plate_excluded_gibberish = plate
+    for c in gibberish:
+        plate_excluded_gibberish = plate_excluded_gibberish.replace(c, "")
+    plen = len(plate)
+    pwogibberishlen = len(plate_excluded_gibberish)
+    pfits = plen == 7 or plen == 8
+    pwogibfits = pwogibberishlen == 7 or pwogibberishlen == 8
+    if not pfits or not pwogibfits:
+        return None
 
 class LPRecognizer:
     def __init__(self, lpr_model: YOLO, carr_model: YOLO = None, lpr_reader: Reader = None, follow_cont = True) -> None:
@@ -125,7 +229,8 @@ class LPRecognizer:
         if self.lpr_reader is None:
             return
         lp_image = crop_image(image, lpdata.box)
-        lp_image = preprocess_img_for_ocr(lp_image)
+        lp_image, res = preprocess_img_for_ocr(lp_image)
+        conf_mult = 1 if res else 0.5
         max_conf = 0
         if lpdata.plate_confidence is not None:
             max_conf = lpdata.plate_confidence
@@ -134,7 +239,8 @@ class LPRecognizer:
             max_len = len(lpdata.plate)
         read_results = self.lpr_reader.readtext(lp_image)
         for _, text, conf in read_results:
-            if len(text) < max_len or conf < max_conf:
+            conf *= conf_mult
+            if len(text) < max_len:
                 continue
             max_len = len(text)
             max_conf = conf
