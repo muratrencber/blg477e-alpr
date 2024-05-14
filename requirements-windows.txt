@@ -1,0 +1,10 @@
+ultralytics
+opencv-contrib-python
+torch
+easyocr
+motpy
+numpy
+tk
+sv_ttk
+Pillow
+matplotlib
